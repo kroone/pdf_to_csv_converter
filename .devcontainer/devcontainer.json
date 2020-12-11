@@ -38,7 +38,10 @@
 	"forwardPorts": [8888],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "pip3 install --user -r requirements.txt & jupyter labextension install @jupyterlab/toc",
+	"postCreateCommand": "pip3 install --user -r requirements.txt \
+								&& jupyter labextension install @jupyterlab/toc \
+								&& jupyter nbextensions_configurator enable --user \
+								&& jupyter nbextension enable toc2/main",
 
 	// Comment out connect as root instead. More info: https://aka.ms/vscode-remote/containers/non-root.
 	//"remoteUser": "vscode"
