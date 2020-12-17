@@ -52,7 +52,7 @@ def MLP_Buy_Sell_Invoice(text):
 
     check_values = floor(price * amount) == floor(value_final)
     #print(floor(price * amount), floor(value_final))
-    assert(check_values)
+    #assert(check_values)
 
     return insert_dict#, {'amount':amount, 'price':price, 'value':value_final}
 
@@ -131,6 +131,11 @@ filelist = os.listdir(base_folder)
 
 for input_file in filelist:
     org_file_path = os.path.join(base_folder, input_file)
+
+    if not '.pdf' in input_file:
+        'skipped {}'.format(input_file)
+        continue
+
     with pdfplumber.open(org_file_path) as pdf:
         first_page = pdf.pages[0]
         text = first_page.extract_text()
