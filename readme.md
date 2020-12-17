@@ -8,15 +8,15 @@ The script can be called by `python convert_pdf.py`
 
 It takes three additional parameters:
 #### source folder: 
-command: -f or --folder
+command: -f or --folder <br>
 Description: Folder in which the PDFs are stored. All files of the folder will be checked. This input is required.
 
 #### target_folder
-command: -m or --move
+command: -m or --move <br>
 Description: Folder in which the PDFs are moved after they have been read. This funciton is turned of by default.
 
 #### output file path
-command: -o or --output
+command: -o or --output <br>
 Description: Folder in which the final CSV will be stored. The file is stored in the current location by default.
 
 #### Example Output:
