@@ -1,5 +1,2 @@
-daft
-pymc3
-causalgraphicalmodels
-seaborn
-matplotlib
+pdfplumber
+pandas
