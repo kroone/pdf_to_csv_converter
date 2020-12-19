@@ -1,13 +1,12 @@
 import pdfplumber
-import re, os
+import re, os, json
 import pandas as pd
 from datetime import datetime
 from math import floor
 
-
 # # Define
 
-def MLP_Buy_Sell_Invoice(text):
+def MLP_Buy_Sell_Invoice(text, input_file):
     insert_dict = {}
 
     pattern_invoice = '(?<=Rechnungsnummer )\S+(?=\\n)'
@@ -57,7 +56,7 @@ def MLP_Buy_Sell_Invoice(text):
     return insert_dict#, {'amount':amount, 'price':price, 'value':value_final}
 
 
-def MLP_Dividends(text):
+def MLP_Dividends(text, input_file):
     insert_dict = {}
 
     pattern_invoice = '(?<=Abrechnungsnr. )\S+'
@@ -98,74 +97,114 @@ def MLP_Dividends(text):
     return insert_dict
 
 
+def convert_pdf(source_folder, target_folder=False, output_folder=False, bank_accounts_file='default'):
+
+    options_dict = {'MLP Banking AG': 
+                                {'Wertpapier Abrechnung':MLP_Buy_Sell_Invoice,
+                                'Ausschüttung Investmentfonds':MLP_Dividends}
+                }
+
+    path_bank_accounts = bank_accounts_file
+    if os.path.exists(path_bank_accounts):
+        with open(path_bank_accounts) as file:
+            bank_accounts = json.load(file)
+    else:
+        bank_accounts = {}
 
 
-options_dict = {'MLP Banking AG': 
-                            {'Wertpapier Abrechnung':MLP_Buy_Sell_Invoice,
-                            'Ausschüttung Investmentfonds':MLP_Dividends}
-               }
+    cols = ['Datum', 'Typ', 'Wert', 'Buchungswährung', 'Bruttobetrag',
+        'Währung Bruttobetrag', 'Wechselkurs', 'Gebühren', 'Steuern', 'Stück',
+        'ISIN', 'WKN', 'Ticker-Symbol', 'Wertpapiername', 'Notiz']
+    bank_accounts_df_dict = {}
+    bank_accounts_df_dict['default'] = pd.DataFrame(columns = cols)
+    for bank_acc in bank_accounts.keys():
+        bank_accounts_df_dict[bank_acc] = pd.DataFrame(columns = cols)
+
+    ## bank_accounts must be a list like ["45364":"Wishes", "2356":"Names"]
+    assert type(bank_accounts) == dict
 
 
+    # # Input File
+    base_folder = source_folder
+    filelist = os.listdir(base_folder)
 
+    for input_file in filelist:
+        org_file_path = os.path.join(base_folder, input_file)
 
-cols = ['Datum', 'Typ', 'Wert', 'Buchungswährung', 'Bruttobetrag',
-       'Währung Bruttobetrag', 'Wechselkurs', 'Gebühren', 'Steuern', 'Stück',
-       'ISIN', 'WKN', 'Ticker-Symbol', 'Wertpapiername', 'Notiz']
-result_df = pd.DataFrame(columns = cols)
+        if not '.pdf' in input_file:
+            'skipped {}'.format(input_file)
+            continue
 
-
-# # Input File
-
-import argparse
-
-parser = argparse.ArgumentParser(description='Convert MLP PDF to CSV for Portfolio Performance.')
-
-parser.add_argument('--folder', '-f', dest='source_folder', required=True, help='folder with files to be transformed')
-parser.add_argument('--move', '-m', dest='target_folder', required=False, default=False, help='folder to move converted files to')
-parser.add_argument('--output', '-o', dest='output_folder', required=False, default=False, help='folder to save outputfile in')
-
-args = parser.parse_args()
-
-base_folder = args.source_folder
-filelist = os.listdir(base_folder)
-
-for input_file in filelist:
-    org_file_path = os.path.join(base_folder, input_file)
-
-    if not '.pdf' in input_file:
-        'skipped {}'.format(input_file)
-        continue
-
-    with pdfplumber.open(org_file_path) as pdf:
-        first_page = pdf.pages[0]
-        text = first_page.extract_text()
-        #print(text)
+        with pdfplumber.open(org_file_path) as pdf:
+            first_page = pdf.pages[0]
+            text = first_page.extract_text()
+            #print(text)
         
-    for bank in options_dict.keys():
-        if bank in text:
-            for invoice_type in options_dict[bank].keys():
-                if invoice_type in text:
-                    d = options_dict[bank][invoice_type](text)
-                    df_insert = pd.DataFrame.from_dict(d, orient='index').transpose()
-                    result_df = result_df.append(df_insert)
-           
-    if args.target_folder != False:
-        new_file_path = os.path.join(args.target_folder, input_file)
-        os.replace(org_file_path, new_file_path)
+        bank_account_dict = {}
+        for bank in options_dict.keys():
+            if bank in text:
+                for invoice_type in options_dict[bank].keys():
+                    if invoice_type in text:
+                        d = options_dict[bank][invoice_type](text, input_file)
+                        df_insert = pd.DataFrame.from_dict(d, orient='index').transpose()
+
+                        found_bank_acc = False
+                        for bank_acc in bank_accounts.keys():
+                            if bank_acc in text:
+                                found_bank_acc = True
+                                break
+                        if found_bank_acc:
+                            bank_accounts_df_dict[bank_acc] = bank_accounts_df_dict[bank_acc].append(df_insert)
+                        else:
+                            bank_accounts_df_dict['default'] = bank_accounts_df_dict['default'].append(df_insert)
+                        break
+
+
+        if target_folder != False:
+            if found_bank_acc:
+                new_file_path = os.path.join(target_folder, '{}_{}'.format(bank_accounts[bank_acc], input_file))
+            else:
+                new_file_path = os.path.join(target_folder, input_file)
+            os.replace(org_file_path, new_file_path)
 
 
 
-# # Output File
+    # # Output File
 
-file_name = datetime.now().strftime('%Y%m%d_mlp_transactions.csv')
-if args.output_folder != False:
-    file_path = os.path.join(args.output_folder, file_name)
-else:
-    file_path = file_name
-result_df.to_csv(file_path, sep=';')
+    for bank_acc in bank_accounts_df_dict.keys():
+        df_res = bank_accounts_df_dict[bank_acc]
+        if len(df_res) == 0:
+            continue
+        
+        if bank_acc == 'default':
+            bank_acc_name = bank_acc
+        else:
+            bank_acc_name = bank_accounts[bank_acc]
+
+        file_name = '{}_{}'.format(bank_acc_name, datetime.now().strftime('%Y%m%d_mlp_transactions.csv'))
+        if output_folder != False:
+            file_path = os.path.join(output_folder, file_name)
+        else:
+            file_path = file_name
+
+        bank_accounts_df_dict[bank_acc].to_csv(file_path, sep=';')
 
 
 
+#source_folder, target_folder, output_folder = 'data/example_data', 'data/example_converted', 'data/example_output'
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Convert MLP PDF to CSV for Portfolio Performance.')
+
+    parser.add_argument('--folder', '-f', dest='source_folder', required=True, help='folder with files to be transformed')
+    parser.add_argument('--move', '-m', dest='target_folder', required=False, default=False, help='folder to move converted files to')
+    parser.add_argument('--output', '-o', dest='output_folder', required=False, default=False, help='folder to save outputfile in')
+    parser.add_argument('--bank_accounts', '-b', dest='bank_accounts_file', required=False, default=False, help='file path to bank_accounts.json')
+
+    args = parser.parse_args()
+
+    convert_pdf(args.source_folder, args.target_folder, args.output_folder, args.bank_accounts_file)
 
 
 
