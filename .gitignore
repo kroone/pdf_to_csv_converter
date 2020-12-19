@@ -4,3 +4,5 @@
 data
 DS_Store
 .DS_Store
+bank_accounts.json
+test.sh
