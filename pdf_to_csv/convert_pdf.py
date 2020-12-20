@@ -1,5 +1,5 @@
 import pdfplumber
-import re, os, json
+import re, os, json, shutil
 import pandas as pd
 from datetime import datetime
 from math import floor
@@ -11,7 +11,7 @@ def MLP_Buy_Sell_Invoice(text, input_file):
 
     pattern_invoice = '(?<=Rechnungsnummer )\S+(?=\\n)'
     invoice = re.findall(pattern_invoice, text)[0]
-    insert_dict['Notiz'] = 'File: ' + input_file + '; Rechnung: ' + invoice
+    insert_dict['Notiz'] = re.sub('[/-]',  '_', invoice)
 
     pattern_invoice_type = '(?<=Wertpapier Abrechnung )\S+(?=\\n)'
     invoice_type = re.findall(pattern_invoice_type, text)[0]
@@ -34,7 +34,7 @@ def MLP_Buy_Sell_Invoice(text, input_file):
 
     pattern_day = '(?<=Schlusstag )\S+(?=\\n)'
     day = re.findall(pattern_day, text)[0]
-    insert_dict['Datum'] = pd.to_datetime(day).strftime('%Y-%m-%dT%H:%M')
+    insert_dict['Datum'] = pd.to_datetime(day, format=('%d.%m.%Y')).strftime('%Y-%m-%dT%H:%M')
 
 
     pattern_value = '(?<=Kurswert )\S+'
@@ -61,7 +61,7 @@ def MLP_Dividends(text, input_file):
 
     pattern_invoice = '(?<=Abrechnungsnr. )\S+'
     invoice = re.findall(pattern_invoice, text)[0]
-    insert_dict['Notiz'] = 'File: ' + input_file + '; Rechnung: ' + invoice
+    insert_dict['Notiz'] = re.sub('[/-]',  '_', invoice)
 
     insert_dict['Typ'] = 'Dividende'
 
@@ -88,7 +88,7 @@ def MLP_Dividends(text, input_file):
 
     pattern_day = '(?<=Datum )\S+(?=\\n)'
     day = re.findall(pattern_day, text)[0]
-    insert_dict['Datum'] = pd.to_datetime(day).strftime('%Y-%m-%dT%H:%M')
+    insert_dict['Datum'] = pd.to_datetime(day, format=('%d.%m.%Y')).strftime('%Y-%m-%dT%H:%M')
     
     insert_dict['Stück'] = str(insert_dict['Stück']).replace('.', ',')
     insert_dict['Wert'] = str(insert_dict['Wert']).replace('.', ',')
@@ -161,11 +161,14 @@ def convert_pdf(source_folder, target_folder=False, output_folder=False, bank_ac
 
 
         if target_folder != False:
-            if found_bank_acc:
-                new_file_path = os.path.join(target_folder, '{}_{}'.format(bank_accounts[bank_acc], input_file))
-            else:
-                new_file_path = os.path.join(target_folder, input_file)
-            os.replace(org_file_path, new_file_path)
+            path_archiv = os.path.join(target_folder, 'archiv')
+            path_converted = os.path.join(target_folder, 'converted')
+            for p in [path_archiv, path_converted]:
+                if os.path.exists(p) == False:
+                    os.mkdir(p)
+            
+            shutil.copy(org_file_path, path_archiv)
+            os.replace(org_file_path, os.path.join(path_converted, '{}_{}_{}'.format(pd.to_datetime(df_insert['Datum'][0]).strftime('%Y%m%d'), df_insert['WKN'][0], df_insert['Notiz'][0])))
 
 
 
@@ -173,6 +176,7 @@ def convert_pdf(source_folder, target_folder=False, output_folder=False, bank_ac
 
     for bank_acc in bank_accounts_df_dict.keys():
         df_res = bank_accounts_df_dict[bank_acc]
+        df_res = df_res.drop_duplicates(subset=['Wertpapiername','Notiz','Stück','Typ','Wert'])
         if len(df_res) == 0:
             continue
         
@@ -187,11 +191,11 @@ def convert_pdf(source_folder, target_folder=False, output_folder=False, bank_ac
         else:
             file_path = file_name
 
-        bank_accounts_df_dict[bank_acc].to_csv(file_path, sep=';')
+        df_res.to_csv(file_path, sep=';')
 
 
 
-#source_folder, target_folder, output_folder = 'data/example_data', 'data/example_converted', 'data/example_output'
+#source_folder, target_folder, output_folder, bank_accounts_file = 'data/examples', 'data/converted', 'data/output', 'bank_accounts.json'
 if __name__ == '__main__':
     import argparse
 
