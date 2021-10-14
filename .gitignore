@@ -8,3 +8,10 @@ bank_accounts.json
 test.sh
 *.ipynb
 *.sh
+.devcontainer
+files/
+.tmp*
+*.pyc
+
+
+convert_files.ipynb

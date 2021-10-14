@@ -1,2 +1,5 @@
 pdfplumber
 pandas
+fastparquet
+html5lib
+BeautifulSoup4
