@@ -3,7 +3,17 @@ import re, pdfplumber, os, json
 from math import floor
 import pandas as pd
 
+
+def get_value(value_str):
+    pattern_value = '[0-9,]+'
+    value = float(re.findall(pattern_value, value_str)[0].replace(',', '.'))
+    if '-' in value_str:
+        value = value * -1
+    return value
+
+
 def MLP_Buy_Sell_Invoice(text, input_file):
+    
     insert_dict = {}
 
     pattern_invoice = '(?<=Rechnungsnummer )\S+(?=\\n)'
@@ -14,7 +24,6 @@ def MLP_Buy_Sell_Invoice(text, input_file):
     invoice_type = re.findall(pattern_invoice_type, text)[0]
     insert_dict['Typ'] = invoice_type
 
-
     pattern_amount = '(?<=Stück ).+'
     desc_list = re.findall(pattern_amount, text)[0].split(' ')
     insert_dict['Wertpapiername'] = ' '.join(desc_list[1:-2])
@@ -22,33 +31,49 @@ def MLP_Buy_Sell_Invoice(text, input_file):
     insert_dict['Stück'] = amount
     insert_dict['ISIN'] = invoice = desc_list[-2]
     insert_dict['WKN'] = desc_list[-1][1:-1]
-    
-    pattern_price = '(?<=hrungskurs )\S+'
-    price = re.findall(pattern_price, text)[0]
-    price = float(price.replace(',', '.'))
 
-    insert_dict['Wert'] = round(price * insert_dict['Stück'], 2)
+    pattern_price = '(?<=hrungskurs )\S+'
+    price_input = re.findall(pattern_price, text)[0]
+    price = get_value(price_input)
+    #insert_dict['Wert'] = round(price * insert_dict['Stück'], 2)
 
     pattern_day = '(?<=Schlusstag )\S+(?=\\n)'
     day = re.findall(pattern_day, text)[0]
     insert_dict['Datum'] = pd.to_datetime(day, format=('%d.%m.%Y')).strftime('%Y-%m-%dT%H:%M')
 
+    text_array = text.split('\n')
+    tax = 0
+    for i, text_part in enumerate(text_array):
+        pattern1 = 'Kapitalertragsteuer [0-9,]+%'
+        pattern2 = 'Solidaritätszuschlag [0-9,]+%'
+        pattern3 = 'Kirchensteuer [0-9,]+%'
 
+        for steuer_pattern in [pattern1, pattern2, pattern3]:
+            if re.match(steuer_pattern, text_part):
+                pattern_euro = '[0-9,-]+ EUR'
+                value_str = re.findall(pattern_euro, text_part)[-1]
+                value = get_value(value_str)
+
+                #print(i, tax, value, value_str)
+                tax = tax + value
+
+    insert_dict['Steuern'] = tax   
     pattern_value = '(?<=Kurswert )\S+'
     value_input = re.findall(pattern_value, text)[0]
-    value = float(value_input.replace('.', '').replace(',', '.').replace('-', ''))
+    value = get_value(value_input)
+
     pattern_value_final = '(?<=Ausmachender Betrag )\S+'
-    value_final = re.findall(pattern_value, text)[0]
-    value_final = float(value_final.replace('.', '').replace(',', '.').replace('-', ''))
-    insert_dict['Gebühren'] = value_final - value
+    value_final_input = re.findall(pattern_value_final, text)[0]
+    value_final = get_value(value_final_input)
+
+    insert_dict['Gebühren'] = round(value_final - value - tax, 4)
+
+    if value_final < 0:
+        insert_dict['Stück'] = insert_dict['Stück'] * -1
 
     insert_dict['Stück'] = str(insert_dict['Stück']).replace('.', ',')
-    insert_dict['Wert'] = str(insert_dict['Wert']).replace('.', ',')
+    insert_dict['Wert'] = str(value_final).replace('.', ',')
     insert_dict['Gebühren'] = str(insert_dict['Gebühren']).replace('.', ',')
-
-    check_values = floor(price * amount) == floor(value_final)
-    #print(floor(price * amount), floor(value_final))
-    #assert(check_values)
 
     return insert_dict#, {'amount':amount, 'price':price, 'value':value_final}
 
@@ -94,15 +119,18 @@ def MLP_Dividends(text, input_file):
     return insert_dict
 
 
+def read_pdf(pdf_file_path):
+    with pdfplumber.open(pdf_file_path) as pdf:
+        first_page = pdf.pages[0]
+        text = first_page.extract_text()
+        return text
+
+
 def extract_mlp_pdf(org_file_path):
 
     assert '.pdf' in org_file_path
 
-    with pdfplumber.open(org_file_path) as pdf:
-        first_page = pdf.pages[0]
-        text = first_page.extract_text()
-        #print(text)
-
+    text = read_pdf(org_file_path)
 
     options_dict = {'MLP Banking AG': 
                 {'Wertpapier Abrechnung':MLP_Buy_Sell_Invoice,
@@ -135,7 +163,6 @@ def extract_mlp_pdf(org_file_path):
 
                     d = options_dict[bank][invoice_type](text, org_file_path)
                     df_insert = df_insert.append(pd.DataFrame.from_dict(d, orient='index').transpose())
-                    df_insert['account'] = 'default'
 
                     for bank_acc in bank_accounts.keys():
                         if bank_acc in text:
