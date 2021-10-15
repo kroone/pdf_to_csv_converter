@@ -3,13 +3,132 @@ import re, pdfplumber, os, json
 from math import floor
 import pandas as pd
 
+def parseNumber(text):
+    """
+        Return the first number in the given text for any locale.
+        TODO we actually don't take into account spaces for only
+        3-digited numbers (like "1 000") so, for now, "1 0" is 10.
+        TODO parse cases like "125,000.1,0.2" (125000.1).
+        :example:
+        >>> parseNumber("a 125,00 €")
+        125
+        >>> parseNumber("100.000,000")
+        100000
+        >>> parseNumber("100 000,000")
+        100000
+        >>> parseNumber("100,000,000")
+        100000000
+        >>> parseNumber("100 000 000")
+        100000000
+        >>> parseNumber("100.001 001")
+        100.001
+        >>> parseNumber("$.3")
+        0.3
+        >>> parseNumber(".003")
+        0.003
+        >>> parseNumber(".003 55")
+        0.003
+        >>> parseNumber("3 005")
+        3005
+        >>> parseNumber("1.190,00 €")
+        1190
+        >>> parseNumber("1190,00 €")
+        1190
+        >>> parseNumber("1,190.00 €")
+        1190
+        >>> parseNumber("$1190.00")
+        1190
+        >>> parseNumber("$1 190.99")
+        1190.99
+        >>> parseNumber("$-1 190.99")
+        -1190.99
+        >>> parseNumber("1 000 000.3")
+        1000000.3
+        >>> parseNumber('-151.744122')
+        -151.744122
+        >>> parseNumber('-1')
+        -1
+        >>> parseNumber("1 0002,1.2")
+        10002.1
+        >>> parseNumber("")
+        >>> parseNumber(None)
+        >>> parseNumber(1)
+        1
+        >>> parseNumber(1.1)
+        1.1
+        >>> parseNumber("rrr1,.2o")
+        1
+        >>> parseNumber("rrr1rrr")
+        1
+        >>> parseNumber("rrr ,.o")
+    """
+    try:
+        # First we return None if we don't have something in the text:
+        if text is None:
+            return None
+        if isinstance(text, int) or isinstance(text, float):
+            return text
+        text = text.strip()
+        if text == "":
+            return None
+        # Next we get the first "[0-9,. ]+":
+        n = re.search("-?[0-9]*([,. ]?[0-9]+)+", text).group(0)
+        n = n.strip()
+        if not re.match(".*[0-9]+.*", text):
+            return None
+        # Then we cut to keep only 2 symbols:
+        while " " in n and "," in n and "." in n:
+            index = max(n.rfind(','), n.rfind(' '), n.rfind('.'))
+            n = n[0:index]
+        n = n.strip()
+        # We count the number of symbols:
+        symbolsCount = 0
+        for current in [" ", ",", "."]:
+            if current in n:
+                symbolsCount += 1
+        # If we don't have any symbol, we do nothing:
+        if symbolsCount == 0:
+            pass
+        # With one symbol:
+        elif symbolsCount == 1:
+            # If this is a space, we just remove all:
+            if " " in n:
+                n = n.replace(" ", "")
+            # Else we set it as a "." if one occurence, or remove it:
+            else:
+                theSymbol = "," if "," in n else "."
+                if n.count(theSymbol) > 1:
+                    n = n.replace(theSymbol, "")
+                else:
+                    n = n.replace(theSymbol, ".")
+        else:
+            # Now replace symbols so the right symbol is "." and all left are "":
+            rightSymbolIndex = max(n.rfind(','), n.rfind(' '), n.rfind('.'))
+            rightSymbol = n[rightSymbolIndex:rightSymbolIndex+1]
+            if rightSymbol == " ":
+                return parseNumber(n.replace(" ", "_"))
+            n = n.replace(rightSymbol, "R")
+            leftSymbolIndex = max(n.rfind(','), n.rfind(' '), n.rfind('.'))
+            leftSymbol = n[leftSymbolIndex:leftSymbolIndex+1]
+            n = n.replace(leftSymbol, "L")
+            n = n.replace("L", "")
+            n = n.replace("R", ".")
+        # And we cast the text to float or int:
+        n = float(n)
+        if n.is_integer():
+            return int(n)
+        else:
+            return n
+    except: pass
+    return None
 
-def get_value(value_str):
-    pattern_value = '[0-9,]+'
-    value = float(re.findall(pattern_value, value_str)[0].replace(',', '.'))
-    if '-' in value_str:
-        value = value * -1
-    return value
+
+def get_value(text):
+    value = parseNumber(text)
+    if "-" in text:
+        #value = value * -1 #ignored because portfolio performance only accepts positve values and distinguishes by type
+        pass
+    return round(value, 8)
 
 
 def MLP_Buy_Sell_Invoice(text, input_file):
@@ -17,25 +136,32 @@ def MLP_Buy_Sell_Invoice(text, input_file):
     insert_dict = {}
 
     pattern_invoice = '(?<=Rechnungsnummer )\S+(?=\\n)'
-    invoice = re.findall(pattern_invoice, text)[0]
-    insert_dict['Notiz'] = re.sub('[/-]',  '_', invoice)
+    invoice_1 = re.findall(pattern_invoice, text)[0]
+    invoice_1 = re.sub('[/-]',  '_', invoice_1)
+    insert_dict['Rechnung'] = invoice_1
+
+    pattern_invoice = '(?<=Auftragsnummer )\S+(?=\\n)'
+    invoice_2 = re.findall(pattern_invoice, text)[0]
+    insert_dict['Notiz'] = invoice_1 + '_' + invoice_2
 
     pattern_invoice_type = '(?<=Wertpapier Abrechnung )\S+(?=\\n)'
     invoice_type = re.findall(pattern_invoice_type, text)[0]
-    insert_dict['Typ'] = invoice_type
+    
+    if 'Storno' in text:
+        insert_dict['Typ'] = 'Storno'
+    else:
+        insert_dict['Typ'] = invoice_type
 
     pattern_amount = '(?<=Stück ).+'
     desc_list = re.findall(pattern_amount, text)[0].split(' ')
     insert_dict['Wertpapiername'] = ' '.join(desc_list[1:-2])
-    amount = float(desc_list[0].replace(',', '.'))
-    insert_dict['Stück'] = amount
+    insert_dict['Stück'] = get_value(desc_list[0])
     insert_dict['ISIN'] = invoice = desc_list[-2]
     insert_dict['WKN'] = desc_list[-1][1:-1]
 
     pattern_price = '(?<=hrungskurs )\S+'
     price_input = re.findall(pattern_price, text)[0]
-    price = get_value(price_input)
-    #insert_dict['Wert'] = round(price * insert_dict['Stück'], 2)
+    insert_dict['Kurs'] = get_value(price_input)
 
     pattern_day = '(?<=Schlusstag )\S+(?=\\n)'
     day = re.findall(pattern_day, text)[0]
@@ -57,6 +183,16 @@ def MLP_Buy_Sell_Invoice(text, input_file):
                 #print(i, tax, value, value_str)
                 tax = tax + value
 
+                if 'Devisenkurs' in text_part:
+                    pattern = '[0-9,]+'
+                    insert_dict['Wechselkurs'] = get_value(re.findall(pattern, text_part)[0])
+                    
+                if 'hrungskurs' in text_part:
+                    insert_dict['Währung Bruttobetrag'] = text_part.split(' ')[-1]
+                    
+                if 'Ausmachender Betrag' in text_part:
+                    insert_dict['Buchungswährung'] = text_part.split(' ')[-1]
+
     insert_dict['Steuern'] = tax   
     pattern_value = '(?<=Kurswert )\S+'
     value_input = re.findall(pattern_value, text)[0]
@@ -66,16 +202,22 @@ def MLP_Buy_Sell_Invoice(text, input_file):
     value_final_input = re.findall(pattern_value_final, text)[0]
     value_final = get_value(value_final_input)
 
-    insert_dict['Gebühren'] = round(value_final - value - tax, 4)
+    insert_dict['Wert'] = value_final
+
+    if invoice_type == 'Kauf':
+        insert_dict['Gebühren'] = round(value_final - value - tax, 4)
+    else:
+        insert_dict['Gebühren'] = round(value_final - value - tax, 4) * -1
 
     if value_final < 0:
-        insert_dict['Stück'] = insert_dict['Stück'] * -1
+        #insert_dict['Stück'] = insert_dict['Stück'] * -1
+        pass
 
-    insert_dict['Stück'] = str(insert_dict['Stück']).replace('.', ',')
-    insert_dict['Wert'] = str(value_final).replace('.', ',')
-    insert_dict['Gebühren'] = str(insert_dict['Gebühren']).replace('.', ',')
+    #format needed for portfolio performance
+    for col in [key for key, value in insert_dict.items() if type(value) == float]:
+        insert_dict[col] = str(insert_dict[col]).replace('.', ',')
 
-    return insert_dict#, {'amount':amount, 'price':price, 'value':value_final}
+    return insert_dict
 
 
 def MLP_Dividends(text, input_file):
@@ -121,9 +263,8 @@ def MLP_Dividends(text, input_file):
 
 def read_pdf(pdf_file_path):
     with pdfplumber.open(pdf_file_path) as pdf:
-        first_page = pdf.pages[0]
-        text = first_page.extract_text()
-        return text
+        text = ' '.join([page.extract_text() for page in pdf.pages if page.extract_text() != None])
+    return text
 
 
 def extract_mlp_pdf(org_file_path):
@@ -173,8 +314,103 @@ def extract_mlp_pdf(org_file_path):
 
                     break
             break
-            
+    if len(df_insert) == 0:
+        print('no results')     
+    
     return df_insert
+
+
+
+def MLP_umsatz():
+    df_umsatz = pd.DataFrame()
+
+    for i, row in df.iterrows():
+        insert_dict = {}
+        insert_dict['Wert'] = get_value(row.Betrag)
+        insert_dict['Datum'] = row.Buchung
+        insert_dict['Typ'] = ''
+        
+        
+        if 'depotentgelt' in row.Text.lower():
+            insert_dict['Typ'] = 'Gebühren'
+            #print(row.Text)
+            
+        if 'kauf' in row.Text.lower():
+            insert_dict['Typ'] = 'Kauf'
+            
+            pattern = '(?<=WKN ).+(?= DEPOTNR)'
+            text = re.findall(pattern, row.Text)[0]
+
+            wkn, remaining  = text.split('/')
+            insert_dict['WKN'] = wkn.replace(' ', '')
+            pattern = '\A\S+'
+            isin = re.findall(pattern, remaining[1:])[0]
+            insert_dict['ISIN'] = isin
+            insert_dict['Wertpapiername'] = remaining[len(isin)+2:]
+            
+            pattern_invoice = '(?<=MENGE )\S+'
+            menge = re.findall(pattern_invoice, row.Text)[0]
+            insert_dict['Stück'] = get_value(menge)
+        
+            
+        if 'sparplan' in row.Text.lower():
+            insert_dict['Typ'] = 'Einlage'
+            
+        if 'kapitalertragsteuer' in row.Text.lower():
+            insert_dict['Typ'] = 'Steuern'
+            
+        if 'kirchensteuer' in row.Text.lower():
+            insert_dict['Typ'] = 'Steuern'
+        
+        if 'solidaritätszuschlag' in row.Text.lower():
+            insert_dict['Typ'] = 'Steuern'
+            
+        if 'erstattung vertriebsfolgeprovision' in row.Text.lower():
+            insert_dict['Typ'] = 'Gebührenerstattung'
+            
+        if 'vorabpauschale' in row.Text.lower():
+            insert_dict['Typ'] = 'Steuern'
+            pattern_invoice = '(?<=WKN )\S+'
+            invoice_1 = re.findall(pattern_invoice, row.Text)[0]
+            insert_dict['WKN'] = invoice_1
+            
+        if 'erträgnisgutschrift' in row.Text.lower():
+            insert_dict['Typ'] = 'Zinsen'
+            
+            pattern = '(?<=WKN ).+(?= DEPOTNR)'
+            text = re.findall(pattern, row.Text)[0]
+
+            wkn, remaining  = text.split('/')
+            insert_dict['WKN'] = wkn.replace(' ', '')
+            pattern = '\A\S+'
+            isin = re.findall(pattern, remaining[1:])[0]
+            insert_dict['ISIN'] = isin
+            insert_dict['Wertpapiername'] = remaining[len(isin)+2:]
+            
+            pattern_invoice = '(?<=MENGE )\S+'
+            menge = re.findall(pattern_invoice, row.Text)[0]
+            insert_dict['Stück'] = get_value(menge)
+        
+        if 'dauerauftrag' in row.Text.lower():
+            insert_dict['Typ'] = 'Einlage'
+            
+        if insert_dict['Typ'] == '':
+            raise Exception
+            
+        for col in [key for key, value in insert_dict.items() if type(value) == float]:
+                insert_dict[col] = str(insert_dict[col]).replace('.', ',')
+                
+        pattern = '[\W]'
+        key = row.Buchung + row.Betrag + row.Text[:10].lower()
+        insert_dict['Notiz'] = re.sub(pattern, '', key)
+        insert_dict['File'] = os.path.basename(path_file)
+                
+        df_insert = pd.DataFrame.from_dict(insert_dict, orient='index').transpose()
+        df_umsatz = df_umsatz.append(df_insert)
+            
+    df_umsatz['depot'] = '8516004237'
+    df_umsatz['konto'] = 'MLP'
+    return df_umsatz
 
 
 
