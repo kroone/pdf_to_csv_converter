@@ -12,6 +12,6 @@ test.sh
 files/
 .tmp*
 *.pyc
-
+__pycache__
 
 convert_files.ipynb

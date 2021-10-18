@@ -203,6 +203,11 @@ def MLP_Buy_Sell_Invoice(text, input_file):
     value_final = get_value(value_final_input)
 
     insert_dict['Wert'] = value_final
+    insert_dict['Bruttobetrag'] = insert_dict['Stück'] * insert_dict['Kurs']
+    try:
+        insert_dict['Umrechnungsbetrag'] = round(insert_dict['Bruttobetrag'] / insert_dict['Wechselkurs'], 2)
+    except KeyError:
+        pass
 
     if invoice_type == 'Kauf':
         insert_dict['Gebühren'] = round(value_final - value - tax, 4)
@@ -321,13 +326,16 @@ def extract_mlp_pdf(org_file_path):
 
 
 
-def MLP_umsatz():
-    df_umsatz = pd.DataFrame()
+def MLP_umsatz(path_file):
 
-    for i, row in df.iterrows():
+    df_csv = pd.read_csv(path_file)
+    df_csv.head()
+
+    df_umsatz = pd.DataFrame()
+    for i, row in df_csv.iterrows():
         insert_dict = {}
         insert_dict['Wert'] = get_value(row.Betrag)
-        insert_dict['Datum'] = row.Buchung
+        insert_dict['Datum'] = pd.to_datetime(row.Wert, format=('%d.%m.%Y')).strftime('%Y-%m-%dT%H:%M')
         insert_dict['Typ'] = ''
         
         
@@ -351,10 +359,33 @@ def MLP_umsatz():
             pattern_invoice = '(?<=MENGE )\S+'
             menge = re.findall(pattern_invoice, row.Text)[0]
             insert_dict['Stück'] = get_value(menge)
-        
+            
+            pattern_invoice = '(?<=KURS )\S+'
+            menge = re.findall(pattern_invoice, row.Text)[0]
+            insert_dict['Kurs'] = get_value(menge)
+            
+            pattern_invoice = '(?<=AUFTRAGSNR. )\S+'
+            menge = re.findall(pattern_invoice, row.Text)[0]
+            insert_dict['Auftrag'] = menge
+            
+            insert_dict['Bruttobetrag'] = insert_dict['Kurs'] * insert_dict['Stück']
+            
+            try:
+                pattern_invoice = '(?<=DEVISENKURS )\S+'
+                devkurs = re.findall(pattern_invoice, row.Text)[0]
+                devkurs = re.sub('[A-Z.]', '', devkurs)
+                insert_dict['Wechselkurs'] = get_value(devkurs)
+                insert_dict['Umrechnungsbetrag'] = round(insert_dict['Bruttobetrag'] / insert_dict['Wechselkurs'], 2)
+            except IndexError:
+                pass
+
             
         if 'sparplan' in row.Text.lower():
             insert_dict['Typ'] = 'Einlage'
+            
+            pattern_invoice = '(?<=WKN )\S+'
+            invoice_1 = re.findall(pattern_invoice, row.Text)[0]
+            insert_dict['WKN'] = invoice_1
             
         if 'kapitalertragsteuer' in row.Text.lower():
             insert_dict['Typ'] = 'Steuern'
@@ -398,18 +429,20 @@ def MLP_umsatz():
             raise Exception
             
         for col in [key for key, value in insert_dict.items() if type(value) == float]:
-                insert_dict[col] = str(insert_dict[col]).replace('.', ',')
+            insert_dict[col] = str(insert_dict[col]).replace('.', ',')
+            pass
                 
         pattern = '[\W]'
         key = row.Buchung + row.Betrag + row.Text[:10].lower()
         insert_dict['Notiz'] = re.sub(pattern, '', key)
-        insert_dict['File'] = os.path.basename(path_file)
+        insert_dict['file'] = os.path.basename(path_file)
                 
         df_insert = pd.DataFrame.from_dict(insert_dict, orient='index').transpose()
         df_umsatz = df_umsatz.append(df_insert)
             
     df_umsatz['depot'] = '8516004237'
     df_umsatz['konto'] = 'MLP'
+    df_umsatz = df_umsatz.reset_index(drop=True)
     return df_umsatz
 
 
